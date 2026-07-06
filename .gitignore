@@ -1,0 +1,6 @@
+tank.db
+__pycache__/
+*.pyc
+.DS_Store
+marketing-output/
+firmware/secrets.h

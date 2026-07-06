@@ -1,0 +1,147 @@
+# Home Assistant automations for AquaSentry pump control.
+#
+# Entity IDs here are generalized (switch.pump, sensor.pump_power, etc.) —
+# substitute your own tank sensor and smart-plug entity IDs.
+
+- id: '1782666086027'
+  alias: Tank Full - Turn Pump OFF
+  description: >-
+    On the first reading below the "full" threshold (25cm), wait a fixed
+    2 minutes then shut off unconditionally. This avoids a "stay
+    continuously below threshold" debounce, which is unreliable when the
+    sensor gets noisy near full water level.
+  initial_state: true
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.water_distance
+    below: 25
+    id: full_reading
+  conditions:
+  - condition: state
+    entity_id: switch.pump
+    state: 'on'
+  actions:
+  - delay:
+      minutes: 2
+  - target:
+      entity_id: switch.pump
+    action: switch.turn_off
+  mode: single
+
+- id: '1782666125031'
+  alias: Pump Safety Timeout - 18 mins
+  description: Blanket backstop — cuts the pump after 18 minutes of continuous
+    runtime regardless of tank level, in case other automations fail to fire.
+  initial_state: true
+  triggers:
+  - trigger: state
+    entity_id: switch.pump
+    to: 'on'
+    for:
+      minutes: 18
+  actions:
+  - target:
+      entity_id: switch.pump
+    action: switch.turn_off
+  mode: single
+
+- id: '1782826587578'
+  alias: Turn ON Water Pump
+  description: Requires the reading to stay above the "low" threshold (70cm)
+    continuously for 60s, so a single spurious sensor spike can't start the pump.
+  initial_state: true
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.water_distance
+    above: 70
+    for:
+      seconds: 60
+  conditions:
+  - condition: state
+    entity_id: switch.pump
+    state: 'off'
+  actions:
+  - target:
+      entity_id: switch.pump
+    action: switch.turn_on
+  mode: single
+
+- id: '1782900000001'
+  alias: Publish Pump Status to MQTT
+  description: Mirrors the pump switch state to water/pump (retained), which
+    the dashboard consumes for the pump status badge and audit log.
+  triggers:
+  - trigger: state
+    entity_id: switch.pump
+    to:
+    - 'on'
+    - 'off'
+  - trigger: homeassistant
+    event: start
+  actions:
+  - action: mqtt.publish
+    data:
+      topic: water/pump
+      payload: '{{ states(''switch.pump'') }}'
+      retain: true
+  mode: single
+
+- id: '1782900000002'
+  alias: Pump Dry-Run Protection
+  description: >-
+    Cuts the pump if power draw drops below 900W (a sign the motor is
+    spinning with no hydraulic load, i.e. running dry) for 5 sustained
+    seconds. Ignores the first 25s after turn-on to skip the startup
+    inrush transient. Publishes an alert and fires a persistent
+    notification distinct from routine tank-full shutoffs.
+  initial_state: true
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.pump_power
+    below: 900
+    for:
+      seconds: 5
+  conditions:
+  - condition: state
+    entity_id: switch.pump
+    state: 'on'
+  - condition: template
+    value_template: "{{ (now() - states.switch.pump.last_changed).total_seconds() >= 25 }}"
+  actions:
+  - target:
+      entity_id: switch.pump
+    action: switch.turn_off
+  - action: mqtt.publish
+    data:
+      topic: water/pump_alert
+      payload: dry_run
+  - action: persistent_notification.create
+    data:
+      title: Pump Safety Stop
+      message: Pump stopped automatically - possible dry-run detected (power draw dropped below normal). Check well water level before restarting.
+      notification_id: pump_dry_run_alert
+  mode: single
+
+- id: '1782900000004'
+  alias: Publish Pump Telemetry to MQTT
+  description: Publishes power/voltage/current/energy telemetry to
+    water/pump_telemetry every minute, for the dashboard's Pump Power card.
+  triggers:
+  - trigger: time_pattern
+    minutes: /1
+  actions:
+  - action: mqtt.publish
+    data:
+      topic: water/pump_telemetry
+      retain: true
+      payload: >-
+        {{ {
+          "power_w": states('sensor.pump_power') | float(0),
+          "voltage_v": states('sensor.pump_voltage') | float(0),
+          "current_a": states('sensor.pump_current') | float(0),
+          "energy_today_kwh": states('sensor.pump_energy_today') | float(0),
+          "energy_month_kwh": states('sensor.pump_energy_month') | float(0),
+          "overloaded": is_state('binary_sensor.pump_overloaded', 'on'),
+          "timestamp": now().isoformat()
+        } | tojson }}
+  mode: single

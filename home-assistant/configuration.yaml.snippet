@@ -1,0 +1,12 @@
+# Add this to your Home Assistant configuration.yaml.
+# Exposes the tank distance reading as a proper HA entity so automations
+# can use numeric_state triggers/conditions instead of raw MQTT payload matching.
+
+mqtt:
+  sensor:
+    - name: "Water Distance"
+      unique_id: water_distance_sensor
+      state_topic: "water/distance"
+      unit_of_measurement: "cm"
+      device_class: distance
+      state_class: measurement

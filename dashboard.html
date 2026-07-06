@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Water Tank Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+  body { background-color: #0f172a; }
+  .gauge-ring { transition: stroke-dashoffset 0.8s ease, stroke 0.5s ease; }
+  .pulse-dot { animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+</style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans">
+<div class="max-w-6xl mx-auto px-4 py-6">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+    <div class="flex items-center gap-3">
+      <div id="conn-dot" class="w-3 h-3 rounded-full bg-slate-600 pulse-dot"></div>
+      <h1 class="text-2xl font-bold text-slate-100">Water Tank Dashboard</h1>
+    </div>
+    <div class="text-sm text-slate-400">
+      Last updated: <span id="last-updated" class="text-slate-300 font-medium">--</span>
+    </div>
+  </div>
+
+  <!-- Top row: stat cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <div class="text-slate-400 text-sm mb-1">Distance</div>
+      <div class="text-3xl font-bold" id="stat-distance">-- cm</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <div class="text-slate-400 text-sm mb-1">Water Volume</div>
+      <div class="text-3xl font-bold" id="stat-volume">-- L</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+      <div class="text-slate-400 text-sm mb-2">Pump Status</div>
+      <div>
+        <span id="pump-badge" class="inline-block px-4 py-1.5 rounded-full text-sm font-semibold bg-slate-700 text-slate-300">
+          UNKNOWN
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pump power telemetry -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-slate-400 text-sm">Pump Power</h2>
+      <span id="overload-badge" class="hidden px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/40">OVERLOAD</span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Power</div>
+        <div class="text-xl font-bold" id="telemetry-power">-- W</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Voltage</div>
+        <div class="text-xl font-bold" id="telemetry-voltage">-- V</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Current</div>
+        <div class="text-xl font-bold" id="telemetry-current">-- A</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Energy Today</div>
+        <div class="text-xl font-bold" id="telemetry-energy-today">-- kWh</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Energy This Month</div>
+        <div class="text-xl font-bold" id="telemetry-energy-month">-- kWh</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Middle row: gauge + chart -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center">
+      <h2 class="text-slate-400 text-sm mb-4 self-start">Tank Level</h2>
+      <svg viewBox="0 0 200 200" class="w-56 h-56">
+        <circle cx="100" cy="100" r="85" fill="none" stroke="#1e293b" stroke-width="16" />
+        <circle
+          id="gauge-ring"
+          class="gauge-ring"
+          cx="100" cy="100" r="85"
+          fill="none"
+          stroke="#3b82f6"
+          stroke-width="16"
+          stroke-linecap="round"
+          stroke-dasharray="534.07"
+          stroke-dashoffset="534.07"
+          transform="rotate(-90 100 100)"
+        />
+        <text id="gauge-percent" x="100" y="98" text-anchor="middle" font-size="36" font-weight="bold" fill="#f1f5f9">--%</text>
+        <text id="gauge-label" x="100" y="124" text-anchor="middle" font-size="14" fill="#94a3b8">OK</text>
+      </svg>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h2 class="text-slate-400 text-sm" id="level-chart-title">Water Level — Last 24 Hours</h2>
+        <div class="flex items-center gap-1 flex-wrap">
+          <button data-hours="1" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">1H</button>
+          <button data-hours="6" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">6H</button>
+          <button data-hours="24" class="range-btn px-2 py-1 text-xs rounded-md bg-blue-600 text-white">24H</button>
+          <button data-hours="168" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">7D</button>
+          <button id="reset-zoom-btn" class="px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">Reset Zoom</button>
+        </div>
+      </div>
+      <div class="text-xs text-slate-500 mb-2">Scroll or pinch to zoom, drag to pan — hover any point for exact readings.</div>
+      <div class="h-56 sm:h-64">
+        <canvas id="history-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 24h summary stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs mb-1">24h Min Level</div>
+      <div class="text-xl font-bold" id="stat-min-percent">--%</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs mb-1">24h Max Level</div>
+      <div class="text-xl font-bold" id="stat-max-percent">--%</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs mb-1">24h Avg Level</div>
+      <div class="text-xl font-bold" id="stat-avg-percent">--%</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs mb-1">Pump Runtime (24h)</div>
+      <div class="text-xl font-bold" id="stat-pump-runtime">--</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs mb-1">Pump Cycles (24h)</div>
+      <div class="text-xl font-bold" id="stat-pump-cycles">--</div>
+    </div>
+  </div>
+
+  <!-- Last fill session -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+    <h2 class="text-slate-400 text-sm mb-4">Last Fill Session</h2>
+    <div id="fill-session-empty" class="text-slate-500 text-sm">No completed fill session yet</div>
+    <div id="fill-session-content" class="hidden grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Duration</div>
+        <div class="text-xl font-bold" id="fill-duration">--</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Volume Added</div>
+        <div class="text-xl font-bold" id="fill-volume">--</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Fill Rate</div>
+        <div class="text-xl font-bold" id="fill-rate">--</div>
+      </div>
+      <div>
+        <div class="text-slate-400 text-xs mb-1">Ended</div>
+        <div class="text-xl font-bold" id="fill-ended">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pump activity chart -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+    <h2 class="text-slate-400 text-sm mb-4" id="pump-chart-title">Pump Activity — Last 24 Hours</h2>
+    <div class="h-32">
+      <canvas id="pump-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Bottom: audit log -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <h2 class="text-slate-400 text-sm mb-4">Audit Log</h2>
+    <div class="overflow-y-auto" style="max-height: 300px;">
+      <table class="w-full text-sm">
+        <thead class="sticky top-0 bg-slate-900">
+          <tr class="text-left text-slate-500 border-b border-slate-800">
+            <th class="py-2 pr-4 font-medium">Time</th>
+            <th class="py-2 pr-4 font-medium">Event</th>
+            <th class="py-2 font-medium">Value</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="3" class="py-4 text-slate-500 text-center">No log entries yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const SENSOR_TO_BOTTOM_CM = 105.0;
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 85;
+
+let lastUpdateTime = null;
+let historyChart = null;
+
+function fmtNum(value, digits = 1) {
+  return (value === null || value === undefined || Number.isNaN(value)) ? '--' : Number(value).toFixed(digits);
+}
+
+function fmtTime(isoString) {
+  if (!isoString) return '--';
+  const d = new Date(isoString);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function levelLabel(percent) {
+  if (percent >= 90) return 'FULL';
+  if (percent < 30) return 'LOW';
+  return 'OK';
+}
+
+function levelColor(percent) {
+  if (percent >= 90) return '#22c55e';
+  if (percent < 30) return '#f97316';
+  return '#3b82f6';
+}
+
+function updateGauge(percent) {
+  const ring = document.getElementById('gauge-ring');
+  const pct = Math.max(0, Math.min(100, percent ?? 0));
+  const offset = GAUGE_CIRCUMFERENCE * (1 - pct / 100);
+  ring.style.strokeDashoffset = offset;
+  ring.setAttribute('stroke', levelColor(pct));
+  document.getElementById('gauge-percent').textContent = (percent === null || percent === undefined) ? '--%' : `${fmtNum(percent, 0)}%`;
+  const label = document.getElementById('gauge-label');
+  label.textContent = levelLabel(pct);
+}
+
+function updatePumpBadge(status) {
+  const badge = document.getElementById('pump-badge');
+  const isOn = (status || '').toLowerCase() === 'on';
+  const isKnown = ['on', 'off'].includes((status || '').toLowerCase());
+  badge.textContent = isKnown ? (isOn ? 'RUNNING' : 'OFF') : 'UNKNOWN';
+  badge.className = 'inline-block px-4 py-1.5 rounded-full text-sm font-semibold ' +
+    (isOn ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+          : isKnown ? 'bg-slate-700 text-slate-300 border border-slate-600'
+                    : 'bg-slate-700 text-slate-400 border border-slate-600');
+}
+
+function applySnapshot(data) {
+  if (data.distance !== null && data.distance !== undefined) {
+    document.getElementById('stat-distance').textContent = `${fmtNum(data.distance)} cm`;
+  }
+  if (data.volume_liters !== null && data.volume_liters !== undefined) {
+    document.getElementById('stat-volume').textContent = `${fmtNum(data.volume_liters)} L`;
+  }
+  updateGauge(data.percent);
+  updatePumpBadge(data.pump_status);
+
+  if (data.timestamp) {
+    lastUpdateTime = new Date(data.timestamp);
+  }
+
+  if (data.percent !== null && data.percent !== undefined && data.timestamp) {
+    appendChartPoint(data.timestamp, data.percent, data.distance, data.volume_liters);
+  }
+}
+
+function updateLastUpdatedLabel() {
+  const el = document.getElementById('last-updated');
+  if (!lastUpdateTime) {
+    el.textContent = '--';
+    return;
+  }
+  const seconds = Math.floor((Date.now() - lastUpdateTime.getTime()) / 1000);
+  if (seconds < 60) {
+    el.textContent = `${seconds}s ago`;
+  } else if (seconds < 3600) {
+    el.textContent = `${Math.floor(seconds / 60)}m ago`;
+  } else {
+    el.textContent = `${Math.floor(seconds / 3600)}h ago`;
+  }
+}
+setInterval(updateLastUpdatedLabel, 1000);
+
+// ---- Chart ----
+let currentRangeHours = 24;
+let historyMeta = []; // parallel array to the 'Water %' dataset: {distance, volume_liters}
+
+function fmtDateTime(value) {
+  return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' });
+}
+
+function rangeLabel(hours) {
+  if (hours < 24) return `Last ${hours} Hour${hours === 1 ? '' : 's'}`;
+  if (hours === 24) return 'Last 24 Hours';
+  return `Last ${Math.round(hours / 24)} Days`;
+}
+
+function syncThresholdLines(chart, lowY, highY) {
+  const main = chart.data.datasets[0].data;
+  if (main.length === 0) return;
+  const xStart = main[0].x;
+  const xEnd = main[main.length - 1].x;
+  chart.data.datasets[1].data = [{ x: xStart, y: highY }, { x: xEnd, y: highY }];
+  chart.data.datasets[2].data = [{ x: xStart, y: lowY }, { x: xEnd, y: lowY }];
+}
+
+const zoomOptions = {
+  pan: { enabled: true, mode: 'x' },
+  zoom: {
+    wheel: { enabled: true },
+    pinch: { enabled: true },
+    mode: 'x',
+  },
+};
+
+function initChart() {
+  const ctx = document.getElementById('history-chart').getContext('2d');
+  const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+  gradient.addColorStop(0, 'rgba(59, 130, 246, 0.4)');
+  gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+
+  historyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Water %',
+          data: [],
+          borderColor: '#3b82f6',
+          backgroundColor: gradient,
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          order: 1,
+        },
+        {
+          label: 'Full (90%)',
+          data: [],
+          borderColor: '#22c55e',
+          borderDash: [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          order: 2,
+        },
+        {
+          label: 'Low (30%)',
+          data: [],
+          borderColor: '#f97316',
+          borderDash: [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          order: 2,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'PPpp' },
+          ticks: { color: '#64748b', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+          grid: { color: '#1e293b' },
+        },
+        y: {
+          min: 0, max: 100,
+          ticks: { color: '#64748b', stepSize: 20 },
+          grid: { color: '#1e293b' },
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } },
+        },
+        tooltip: {
+          backgroundColor: '#1e293b',
+          titleColor: '#f1f5f9',
+          bodyColor: '#f1f5f9',
+          callbacks: {
+            title: (items) => (items.length ? fmtDateTime(items[0].parsed.x) : ''),
+            label: (item) => {
+              if (item.dataset.label !== 'Water %') {
+                return `${item.dataset.label}`;
+              }
+              const meta = historyMeta[item.dataIndex] || {};
+              const lines = [`Level: ${fmtNum(item.parsed.y, 1)}%`];
+              if (meta.volume_liters !== undefined) lines.push(`Volume: ${fmtNum(meta.volume_liters, 1)} L`);
+              if (meta.distance !== undefined) lines.push(`Distance: ${fmtNum(meta.distance, 2)} cm`);
+              return lines;
+            },
+          }
+        },
+        zoom: zoomOptions,
+      }
+    }
+  });
+}
+
+function appendChartPoint(isoString, percent, distance, volumeLiters) {
+  if (!historyChart) return;
+  const x = new Date(isoString).getTime();
+  historyChart.data.datasets[0].data.push({ x, y: percent });
+  historyMeta.push({ distance, volume_liters: volumeLiters });
+
+  const cutoffMs = currentRangeHours * 3600 * 1000;
+  const cutoff = Date.now() - cutoffMs;
+  while (historyChart.data.datasets[0].data.length > 0 && historyChart.data.datasets[0].data[0].x < cutoff) {
+    historyChart.data.datasets[0].data.shift();
+    historyMeta.shift();
+  }
+  syncThresholdLines(historyChart, 30, 90);
+  historyChart.update('none');
+}
+
+async function loadHistory(hours = currentRangeHours) {
+  try {
+    const res = await fetch(`/api/history?hours=${hours}`);
+    const rows = await res.json();
+    if (!historyChart) return;
+    historyChart.data.datasets[0].data = rows.map(r => ({ x: new Date(r.timestamp).getTime(), y: r.percent }));
+    historyMeta = rows.map(r => ({ distance: r.distance, volume_liters: r.volume_liters }));
+    syncThresholdLines(historyChart, 30, 90);
+    historyChart.resetZoom();
+    historyChart.update('none');
+  } catch (e) {
+    console.error('Failed to load history', e);
+  }
+}
+
+// ---- Pump activity chart ----
+let pumpChart = null;
+
+function initPumpChart() {
+  const ctx = document.getElementById('pump-chart').getContext('2d');
+  const gradient = ctx.createLinearGradient(0, 0, 0, 130);
+  gradient.addColorStop(0, 'rgba(34, 197, 94, 0.45)');
+  gradient.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+
+  pumpChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Pump',
+        data: [],
+        borderColor: '#22c55e',
+        backgroundColor: gradient,
+        borderWidth: 2,
+        fill: true,
+        stepped: true,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'PPpp' },
+          ticks: { color: '#64748b', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+          grid: { color: '#1e293b' },
+        },
+        y: {
+          min: 0, max: 1,
+          ticks: {
+            color: '#64748b',
+            stepSize: 1,
+            callback: (v) => (v === 1 ? 'ON' : 'OFF'),
+          },
+          grid: { color: '#1e293b' },
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e293b',
+          titleColor: '#f1f5f9',
+          bodyColor: '#f1f5f9',
+          callbacks: {
+            title: (items) => (items.length ? fmtDateTime(items[0].parsed.x) : ''),
+            label: (ctx) => (ctx.parsed.y === 1 ? 'Pump ON' : 'Pump OFF'),
+          }
+        },
+        zoom: zoomOptions,
+      }
+    }
+  });
+}
+
+async function loadPumpHistory(hours = currentRangeHours, resetView = false) {
+  try {
+    const res = await fetch(`/api/pump-history?hours=${hours}`);
+    const points = await res.json();
+    if (!pumpChart) return;
+    pumpChart.data.datasets[0].data = points.map(p => ({ x: new Date(p.timestamp).getTime(), y: p.status === 'on' ? 1 : 0 }));
+    if (resetView) pumpChart.resetZoom();
+    pumpChart.update('none');
+  } catch (e) {
+    console.error('Failed to load pump history', e);
+  }
+}
+
+function setRange(hours) {
+  currentRangeHours = hours;
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    const active = Number(btn.dataset.hours) === hours;
+    btn.classList.toggle('bg-blue-600', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('bg-slate-800', !active);
+    btn.classList.toggle('text-slate-400', !active);
+  });
+  document.getElementById('level-chart-title').textContent = `Water Level — ${rangeLabel(hours)}`;
+  document.getElementById('pump-chart-title').textContent = `Pump Activity — ${rangeLabel(hours)}`;
+  loadHistory(hours);
+  loadPumpHistory(hours, true);
+}
+
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => setRange(Number(btn.dataset.hours)));
+});
+
+document.getElementById('reset-zoom-btn').addEventListener('click', () => {
+  loadHistory(currentRangeHours);
+  loadPumpHistory(currentRangeHours, true);
+});
+
+function fmtDuration(totalSeconds) {
+  if (totalSeconds === null || totalSeconds === undefined) return '--';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats?hours=24');
+    const data = await res.json();
+    document.getElementById('stat-min-percent').textContent = data.min_percent !== null ? `${fmtNum(data.min_percent, 0)}%` : '--%';
+    document.getElementById('stat-max-percent').textContent = data.max_percent !== null ? `${fmtNum(data.max_percent, 0)}%` : '--%';
+    document.getElementById('stat-avg-percent').textContent = data.avg_percent !== null ? `${fmtNum(data.avg_percent, 0)}%` : '--%';
+    document.getElementById('stat-pump-runtime').textContent = fmtDuration(data.pump_on_seconds);
+    document.getElementById('stat-pump-cycles').textContent = data.pump_cycles ?? '--';
+  } catch (e) {
+    console.error('Failed to load stats', e);
+  }
+}
+
+async function loadLastFillSession() {
+  try {
+    const res = await fetch('/api/last-fill-session');
+    const data = await res.json();
+    const empty = document.getElementById('fill-session-empty');
+    const content = document.getElementById('fill-session-content');
+    if (!data.available) {
+      empty.classList.remove('hidden');
+      content.classList.add('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    content.classList.remove('hidden');
+    document.getElementById('fill-duration').textContent = `${fmtNum(data.duration_minutes, 1)} min`;
+    document.getElementById('fill-volume').textContent = `+${fmtNum(data.volume_added_liters, 1)} L`;
+    document.getElementById('fill-rate').textContent = `${fmtNum(data.rate_l_per_min, 1)} L/min`;
+    document.getElementById('fill-ended').textContent = fmtTime(data.end_timestamp);
+  } catch (e) {
+    console.error('Failed to load last fill session', e);
+  }
+}
+
+// ---- Pump power telemetry ----
+function applyTelemetry(data) {
+  document.getElementById('telemetry-power').textContent = data.power_w !== null && data.power_w !== undefined ? `${fmtNum(data.power_w, 0)} W` : '-- W';
+  document.getElementById('telemetry-voltage').textContent = data.voltage_v !== null && data.voltage_v !== undefined ? `${fmtNum(data.voltage_v, 1)} V` : '-- V';
+  document.getElementById('telemetry-current').textContent = data.current_a !== null && data.current_a !== undefined ? `${fmtNum(data.current_a, 2)} A` : '-- A';
+  document.getElementById('telemetry-energy-today').textContent = data.energy_today_kwh !== null && data.energy_today_kwh !== undefined ? `${fmtNum(data.energy_today_kwh, 2)} kWh` : '-- kWh';
+  document.getElementById('telemetry-energy-month').textContent = data.energy_month_kwh !== null && data.energy_month_kwh !== undefined ? `${fmtNum(data.energy_month_kwh, 2)} kWh` : '-- kWh';
+  document.getElementById('overload-badge').classList.toggle('hidden', !data.overloaded);
+}
+
+async function loadPumpTelemetry() {
+  try {
+    const res = await fetch('/api/pump-telemetry');
+    const data = await res.json();
+    applyTelemetry(data);
+  } catch (e) {
+    console.error('Failed to load pump telemetry', e);
+  }
+}
+
+// ---- Audit log ----
+function eventRowClass(event, value) {
+  if (event === 'alert') {
+    return 'border-l-2 border-amber-500 bg-amber-500/10 font-semibold';
+  }
+  if (event === 'pump') {
+    return (value || '').toLowerCase() === 'on'
+      ? 'border-l-2 border-green-500 bg-green-500/5'
+      : 'border-l-2 border-red-500 bg-red-500/5';
+  }
+  return 'border-l-2 border-blue-500 bg-blue-500/5';
+}
+
+function eventLabel(event) {
+  return event === 'alert' ? '⚠ Alert' : event;
+}
+
+function renderLogs(rows) {
+  const body = document.getElementById('log-body');
+  if (!rows || rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="3" class="py-4 text-slate-500 text-center">No log entries yet</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(row => `
+    <tr class="${eventRowClass(row.event, row.value)}">
+      <td class="py-2 pr-4 text-slate-400">${fmtTime(row.timestamp)}</td>
+      <td class="py-2 pr-4 capitalize">${eventLabel(row.event)}</td>
+      <td class="py-2">${row.value}</td>
+    </tr>
+  `).join('');
+}
+
+function prependLogEntry(event, value, timestamp) {
+  const body = document.getElementById('log-body');
+  if (body.children.length === 1 && body.children[0].children.length === 1) {
+    body.innerHTML = '';
+  }
+  const tr = document.createElement('tr');
+  tr.className = eventRowClass(event, value);
+  tr.innerHTML = `
+    <td class="py-2 pr-4 text-slate-400">${fmtTime(timestamp)}</td>
+    <td class="py-2 pr-4 capitalize">${eventLabel(event)}</td>
+    <td class="py-2">${value}</td>
+  `;
+  body.prepend(tr);
+  while (body.children.length > 50) {
+    body.removeChild(body.lastChild);
+  }
+}
+
+async function loadLogs() {
+  try {
+    const res = await fetch('/api/logs?limit=50');
+    const rows = await res.json();
+    renderLogs(rows);
+  } catch (e) {
+    console.error('Failed to load logs', e);
+  }
+}
+
+// ---- WebSocket ----
+let ws = null;
+let reconnectDelay = 1000;
+
+function setConnDot(connected) {
+  const dot = document.getElementById('conn-dot');
+  dot.className = connected
+    ? 'w-3 h-3 rounded-full bg-green-500'
+    : 'w-3 h-3 rounded-full bg-red-500 pulse-dot';
+}
+
+function connectWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+  ws.onopen = () => {
+    setConnDot(true);
+    reconnectDelay = 1000;
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.event === 'telemetry') {
+        applyTelemetry(data);
+        return;
+      }
+      applySnapshot(data);
+      if (data.event && data.event !== 'snapshot' && data.timestamp) {
+        prependLogEntry(data.event, data.value, data.timestamp);
+      }
+      if (data.event === 'pump' && data.value === 'off') {
+        loadLastFillSession();
+      }
+    } catch (e) {
+      console.error('Bad WS message', e);
+    }
+  };
+
+  ws.onclose = () => {
+    setConnDot(false);
+    setTimeout(connectWebSocket, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+async function loadInitial() {
+  try {
+    const res = await fetch('/api/latest');
+    const data = await res.json();
+    applySnapshot(data);
+  } catch (e) {
+    console.error('Failed to load latest', e);
+  }
+}
+
+initChart();
+initPumpChart();
+loadInitial();
+loadHistory();
+loadPumpHistory();
+loadStats();
+loadLastFillSession();
+loadPumpTelemetry();
+loadLogs();
+connectWebSocket();
+updateLastUpdatedLabel();
+
+setInterval(() => {
+  loadStats();
+  loadPumpHistory();
+  loadLastFillSession();
+  loadPumpTelemetry();
+}, 30000);
+</script>
+</body>
+</html>
