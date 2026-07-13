@@ -62,22 +62,31 @@ float getDistance() {
 }
 
 void connectWiFi() {
+  Serial.print("[WiFi] Connecting to SSID: ");
+  Serial.println(ssid);
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWiFi connected!");
+  Serial.print("\n[WiFi] Connected! IP: ");
+  Serial.print(WiFi.localIP());
+  Serial.print(" RSSI: ");
+  Serial.println(WiFi.RSSI());
 }
 
 void connectMQTT() {
   client.setServer(mqtt_server, 1883);
   while (!client.connected()) {
-    Serial.print("Connecting to MQTT...");
+    Serial.print("[MQTT] Connecting to ");
+    Serial.print(mqtt_server);
+    Serial.print(" ... ");
     if (client.connect("NodeMCU_WaterSensor")) {
       Serial.println("connected!");
     } else {
+      Serial.print("failed, state=");
+      Serial.print(client.state());
+      Serial.println(" retrying in 1s");
       delay(1000);
     }
   }
@@ -112,11 +121,12 @@ void loop() {
   if (dist != -1) {
     char distStr[8];
     dtostrf(dist, 4, 2, distStr);
-    client.publish("water/distance", distStr);
-    Serial.print("Published: ");
-    Serial.println(distStr);
+    bool ok = client.publish("water/distance", distStr);
+    Serial.print("[MQTT] Publish ");
+    Serial.print(distStr);
+    Serial.println(ok ? " -> ok" : " -> FAILED");
   } else {
-    Serial.println("Invalid reading - skipping");
+    Serial.println("[Sensor] Invalid reading - skipping");
   }
 
   delay(READ_INTERVAL);

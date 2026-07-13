@@ -1,6 +1,6 @@
 # Firmware
 
-`water_sensor.ino` — the NodeMCU/ESP8266 sketch that reads the HC-SR04 ultrasonic sensor and publishes to `water/distance` over MQTT.
+`water_sensor/water_sensor.ino` — the NodeMCU/ESP8266 sketch that reads the HC-SR04 ultrasonic sensor and publishes to `water/distance` over MQTT. Lives in its own `water_sensor/` folder because the Arduino IDE requires a sketch's folder name to match its `.ino` filename.
 
 ## Setup
 
