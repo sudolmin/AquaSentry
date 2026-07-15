@@ -11,8 +11,26 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
   body { background-color: #0f172a; }
-  .gauge-ring { transition: stroke-dashoffset 0.8s ease, stroke 0.5s ease; }
-  .pulse-dot { animation: pulse 2s infinite; }
+  .gauge-ring { transition: stroke-dashoffset 500ms cubic-bezier(0.77, 0, 0.175, 1), stroke 300ms ease; }
+  .stale-dim { opacity: 0.5; filter: grayscale(0.4); transition: opacity 0.3s ease, filter 0.3s ease; }
+  .range-btn:focus-visible, #reset-zoom-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
+  .banner-enter {
+    transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 200ms cubic-bezier(0.23, 1, 0.32, 1), display 200ms allow-discrete;
+  }
+  /* !important: these elements also carry Tailwind's `flex` utility (display: flex),
+     which ties in specificity with this rule — whichever stylesheet loads last wins
+     the cascade, so without !important this can silently lose to Tailwind's CDN
+     runtime injection and never actually collapse. */
+  .banner-hidden { display: none !important; opacity: 0; transform: translateY(-4px); pointer-events: none; }
+  @starting-style {
+    .banner-enter:not(.banner-hidden) { opacity: 0; transform: translateY(-4px); }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse-dot { animation: pulse 2s infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-dot { opacity: 0.6; }
+  }
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
@@ -28,16 +46,28 @@
       <div id="conn-dot" class="w-3 h-3 rounded-full bg-slate-600 pulse-dot"></div>
       <h1 class="text-2xl font-bold text-slate-100">Water Tank Dashboard</h1>
     </div>
-    <div class="text-sm text-slate-400">
+    <div class="text-sm text-slate-400 flex items-center gap-2">
+      <span id="stale-badge" class="banner-enter banner-hidden px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40">STALE</span>
       Last updated: <span id="last-updated" class="text-slate-300 font-medium">--</span>
     </div>
   </div>
 
+  <!-- Alert banners -->
+  <div id="alert-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/40 text-red-400 text-sm font-semibold flex items-center justify-between gap-3">
+    <span class="banner-text"></span>
+    <button id="alert-dismiss" class="text-red-400 hover:text-red-300 font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
+  </div>
+  <div id="api-error-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-400 text-sm flex items-center justify-between gap-3">
+    <span class="banner-text">Some data may be out of date. A request to the server failed.</span>
+    <button id="api-error-dismiss" class="text-amber-400 hover:text-amber-300 font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
+  </div>
+
   <!-- Top row: stat cards -->
-  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+  <div id="top-stats" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
       <div class="text-slate-400 text-sm mb-1">Distance</div>
       <div class="text-3xl font-bold" id="stat-distance">-- cm</div>
+      <div class="text-slate-400 text-xs mt-1">Lower = more water</div>
     </div>
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
       <div class="text-slate-400 text-sm mb-1">Water Volume</div>
@@ -85,7 +115,7 @@
 
   <!-- Middle row: gauge + chart -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center">
+    <div id="gauge-card" class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center">
       <h2 class="text-slate-400 text-sm mb-4 self-start">Tank Level</h2>
       <svg viewBox="0 0 200 200" class="w-56 h-56">
         <circle cx="100" cy="100" r="85" fill="none" stroke="#1e293b" stroke-width="16" />
@@ -101,7 +131,7 @@
           stroke-dashoffset="534.07"
           transform="rotate(-90 100 100)"
         />
-        <text id="gauge-percent" x="100" y="98" text-anchor="middle" font-size="36" font-weight="bold" fill="#f1f5f9">--%</text>
+        <text id="gauge-percent" x="100" y="98" text-anchor="middle" font-size="32" font-weight="bold" fill="#f1f5f9">--%</text>
         <text id="gauge-label" x="100" y="124" text-anchor="middle" font-size="14" fill="#94a3b8">OK</text>
       </svg>
     </div>
@@ -109,16 +139,17 @@
       <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
         <h2 class="text-slate-400 text-sm" id="level-chart-title">Water Level — Last 24 Hours</h2>
         <div class="flex items-center gap-1 flex-wrap">
-          <button data-hours="1" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">1H</button>
-          <button data-hours="6" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">6H</button>
-          <button data-hours="24" class="range-btn px-2 py-1 text-xs rounded-md bg-blue-600 text-white">24H</button>
-          <button data-hours="168" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">7D</button>
-          <button id="reset-zoom-btn" class="px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700">Reset Zoom</button>
+          <button data-hours="1" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">1H</button>
+          <button data-hours="6" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">6H</button>
+          <button data-hours="24" class="range-btn px-2 py-1 text-xs rounded-md bg-blue-600 text-white transition-colors duration-150" aria-pressed="true">24H</button>
+          <button data-hours="168" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">7D</button>
+          <button id="reset-zoom-btn" class="px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150">Reset Zoom</button>
         </div>
       </div>
-      <div class="text-xs text-slate-500 mb-2">Scroll or pinch to zoom, drag to pan — hover any point for exact readings.</div>
-      <div class="h-56 sm:h-64">
+      <div class="text-xs text-slate-400 mb-2">Scroll or pinch to zoom, drag to pan. Hover any point for exact readings.</div>
+      <div class="h-56 sm:h-64 relative">
         <canvas id="history-chart"></canvas>
+        <div id="history-chart-empty" class="hidden absolute inset-0 flex items-center justify-center text-slate-500 text-sm">No data yet</div>
       </div>
     </div>
   </div>
@@ -211,6 +242,32 @@ function fmtNum(value, digits = 1) {
   return (value === null || value === undefined || Number.isNaN(value)) ? '--' : Number(value).toFixed(digits);
 }
 
+// ---- Shared fetch + API error banner ----
+let apiErrorDismissed = false;
+let hadApiError = false;
+
+function showApiError() {
+  if (!hadApiError) apiErrorDismissed = false; // new occurrence: reset any prior dismissal
+  hadApiError = true;
+  document.getElementById('api-error-banner').classList.toggle('banner-hidden', apiErrorDismissed);
+}
+function hideApiError() {
+  hadApiError = false;
+  apiErrorDismissed = false;
+  document.getElementById('api-error-banner').classList.add('banner-hidden');
+}
+document.getElementById('api-error-dismiss').addEventListener('click', () => {
+  apiErrorDismissed = true;
+  document.getElementById('api-error-banner').classList.add('banner-hidden');
+});
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  const data = await res.json();
+  hideApiError();
+  return data;
+}
+
 function fmtTime(isoString) {
   if (!isoString) return '--';
   const d = new Date(isoString);
@@ -240,7 +297,10 @@ function updateGauge(percent) {
   label.textContent = levelLabel(pct);
 }
 
+let lastPumpStatus = null; // tracked so telemetry can flag an overload-while-off contradiction
+
 function updatePumpBadge(status) {
+  lastPumpStatus = (status || '').toLowerCase();
   const badge = document.getElementById('pump-badge');
   const isOn = (status || '').toLowerCase() === 'on';
   const isKnown = ['on', 'off'].includes((status || '').toLowerCase());
@@ -270,6 +330,8 @@ function applySnapshot(data) {
   }
 }
 
+const STALE_THRESHOLD_SECONDS = 60;
+
 function updateLastUpdatedLabel() {
   const el = document.getElementById('last-updated');
   if (!lastUpdateTime) {
@@ -284,6 +346,11 @@ function updateLastUpdatedLabel() {
   } else {
     el.textContent = `${Math.floor(seconds / 3600)}h ago`;
   }
+
+  const isStale = seconds > STALE_THRESHOLD_SECONDS;
+  document.getElementById('stale-badge').classList.toggle('banner-hidden', !isStale);
+  document.getElementById('top-stats').classList.toggle('stale-dim', isStale);
+  document.getElementById('gauge-card').classList.toggle('stale-dim', isStale);
 }
 setInterval(updateLastUpdatedLabel, 1000);
 
@@ -318,6 +385,8 @@ const zoomOptions = {
     mode: 'x',
   },
 };
+
+let historyLoadedOnce = false;
 
 function initChart() {
   const ctx = document.getElementById('history-chart').getContext('2d');
@@ -428,21 +497,24 @@ function appendChartPoint(isoString, percent, distance, volumeLiters) {
 
 async function loadHistory(hours = currentRangeHours) {
   try {
-    const res = await fetch(`/api/history?hours=${hours}`);
-    const rows = await res.json();
+    const rows = await fetchJson(`/api/history?hours=${hours}`);
     if (!historyChart) return;
+    document.getElementById('history-chart-empty').classList.toggle('hidden', rows.length > 0);
     historyChart.data.datasets[0].data = rows.map(r => ({ x: new Date(r.timestamp).getTime(), y: r.percent }));
     historyMeta = rows.map(r => ({ distance: r.distance, volume_liters: r.volume_liters }));
     syncThresholdLines(historyChart, 30, 90);
     historyChart.resetZoom();
-    historyChart.update('none');
+    historyChart.update(historyLoadedOnce ? 'none' : undefined);
+    historyLoadedOnce = true;
   } catch (e) {
     console.error('Failed to load history', e);
+    showApiError();
   }
 }
 
 // ---- Pump activity chart ----
 let pumpChart = null;
+let pumpHistoryLoadedOnce = false;
 
 function initPumpChart() {
   const ctx = document.getElementById('pump-chart').getContext('2d');
@@ -506,14 +578,15 @@ function initPumpChart() {
 
 async function loadPumpHistory(hours = currentRangeHours, resetView = false) {
   try {
-    const res = await fetch(`/api/pump-history?hours=${hours}`);
-    const points = await res.json();
+    const points = await fetchJson(`/api/pump-history?hours=${hours}`);
     if (!pumpChart) return;
     pumpChart.data.datasets[0].data = points.map(p => ({ x: new Date(p.timestamp).getTime(), y: p.status === 'on' ? 1 : 0 }));
     if (resetView) pumpChart.resetZoom();
-    pumpChart.update('none');
+    pumpChart.update(pumpHistoryLoadedOnce ? 'none' : undefined);
+    pumpHistoryLoadedOnce = true;
   } catch (e) {
     console.error('Failed to load pump history', e);
+    showApiError();
   }
 }
 
@@ -525,6 +598,7 @@ function setRange(hours) {
     btn.classList.toggle('text-white', active);
     btn.classList.toggle('bg-slate-800', !active);
     btn.classList.toggle('text-slate-400', !active);
+    btn.setAttribute('aria-pressed', String(active));
   });
   document.getElementById('level-chart-title').textContent = `Water Level — ${rangeLabel(hours)}`;
   document.getElementById('pump-chart-title').textContent = `Pump Activity — ${rangeLabel(hours)}`;
@@ -550,8 +624,7 @@ function fmtDuration(totalSeconds) {
 
 async function loadStats() {
   try {
-    const res = await fetch('/api/stats?hours=24');
-    const data = await res.json();
+    const data = await fetchJson('/api/stats?hours=24');
     document.getElementById('stat-min-percent').textContent = data.min_percent !== null ? `${fmtNum(data.min_percent, 0)}%` : '--%';
     document.getElementById('stat-max-percent').textContent = data.max_percent !== null ? `${fmtNum(data.max_percent, 0)}%` : '--%';
     document.getElementById('stat-avg-percent').textContent = data.avg_percent !== null ? `${fmtNum(data.avg_percent, 0)}%` : '--%';
@@ -559,13 +632,13 @@ async function loadStats() {
     document.getElementById('stat-pump-cycles').textContent = data.pump_cycles ?? '--';
   } catch (e) {
     console.error('Failed to load stats', e);
+    showApiError();
   }
 }
 
 async function loadLastFillSession() {
   try {
-    const res = await fetch('/api/last-fill-session');
-    const data = await res.json();
+    const data = await fetchJson('/api/last-fill-session');
     const empty = document.getElementById('fill-session-empty');
     const content = document.getElementById('fill-session-content');
     if (!data.available) {
@@ -581,26 +654,58 @@ async function loadLastFillSession() {
     document.getElementById('fill-ended').textContent = fmtTime(data.end_timestamp);
   } catch (e) {
     console.error('Failed to load last fill session', e);
+    showApiError();
   }
 }
 
 // ---- Pump power telemetry ----
+let alertDismissed = false;
+let wasAlertActive = false;
+
+document.getElementById('alert-dismiss').addEventListener('click', () => {
+  alertDismissed = true;
+  document.getElementById('alert-banner').classList.add('banner-hidden');
+});
+
 function applyTelemetry(data) {
   document.getElementById('telemetry-power').textContent = data.power_w !== null && data.power_w !== undefined ? `${fmtNum(data.power_w, 0)} W` : '-- W';
   document.getElementById('telemetry-voltage').textContent = data.voltage_v !== null && data.voltage_v !== undefined ? `${fmtNum(data.voltage_v, 1)} V` : '-- V';
   document.getElementById('telemetry-current').textContent = data.current_a !== null && data.current_a !== undefined ? `${fmtNum(data.current_a, 2)} A` : '-- A';
   document.getElementById('telemetry-energy-today').textContent = data.energy_today_kwh !== null && data.energy_today_kwh !== undefined ? `${fmtNum(data.energy_today_kwh, 2)} kWh` : '-- kWh';
   document.getElementById('telemetry-energy-month').textContent = data.energy_month_kwh !== null && data.energy_month_kwh !== undefined ? `${fmtNum(data.energy_month_kwh, 2)} kWh` : '-- kWh';
-  document.getElementById('overload-badge').classList.toggle('hidden', !data.overloaded);
+  const overloaded = !!data.overloaded;
+  document.getElementById('overload-badge').classList.toggle('hidden', !overloaded);
+
+  // Voltage reflects mains presence at the plug regardless of switch state —
+  // it reads near-zero only if the plug itself lost power (unplugged, tripped
+  // breaker, dead outlet), distinct from the pump just being switched off.
+  const noPower = data.voltage_v !== null && data.voltage_v !== undefined && data.voltage_v < 5;
+
+  const alertActive = overloaded || noPower;
+  if (alertActive && !wasAlertActive) alertDismissed = false; // new occurrence: reset any prior dismissal
+  wasAlertActive = alertActive;
+  const banner = document.getElementById('alert-banner');
+  banner.classList.toggle('banner-hidden', !alertActive || alertDismissed);
+  if (noPower) {
+    banner.querySelector('.banner-text').textContent = 'No power at the plug: the switch may be off or the main supply is down. Check the outlet/breaker.';
+  } else if (overloaded) {
+    // Overload while the pump reads OFF is electrically suspicious (an unpowered
+    // plug shouldn't report an overload) — flag it as a likely sensor/wiring
+    // mismatch rather than a plain "pump overload" so it isn't misread as the
+    // pump itself actively drawing too much current while off.
+    banner.querySelector('.banner-text').textContent = (lastPumpStatus === 'off')
+      ? 'Sensor mismatch: overload reported while pump reads OFF. Check plug wiring/telemetry.'
+      : 'Pump overload detected. Check the plug/pump immediately.';
+  }
 }
 
 async function loadPumpTelemetry() {
   try {
-    const res = await fetch('/api/pump-telemetry');
-    const data = await res.json();
+    const data = await fetchJson('/api/pump-telemetry');
     applyTelemetry(data);
   } catch (e) {
     console.error('Failed to load pump telemetry', e);
+    showApiError();
   }
 }
 
@@ -656,11 +761,11 @@ function prependLogEntry(event, value, timestamp) {
 
 async function loadLogs() {
   try {
-    const res = await fetch('/api/logs?limit=50');
-    const rows = await res.json();
+    const rows = await fetchJson('/api/logs?limit=50');
     renderLogs(rows);
   } catch (e) {
     console.error('Failed to load logs', e);
+    showApiError();
   }
 }
 
@@ -716,11 +821,11 @@ function connectWebSocket() {
 
 async function loadInitial() {
   try {
-    const res = await fetch('/api/latest');
-    const data = await res.json();
+    const data = await fetchJson('/api/latest');
     applySnapshot(data);
   } catch (e) {
     console.error('Failed to load latest', e);
+    showApiError();
   }
 }
 

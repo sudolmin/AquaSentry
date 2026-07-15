@@ -201,6 +201,26 @@ async def init_db():
         await db.commit()
 
 
+async def rehydrate_state():
+    """Repopulate in-memory state from SQLite on startup, so a container
+    restart doesn't show blank placeholders when recent readings exist."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        reading_cursor = await db.execute(
+            "SELECT distance, timestamp FROM readings ORDER BY timestamp DESC LIMIT 1"
+        )
+        reading = await reading_cursor.fetchone()
+        pump_cursor = await db.execute(
+            "SELECT value FROM audit_log WHERE event = 'pump' ORDER BY timestamp DESC LIMIT 1"
+        )
+        pump = await pump_cursor.fetchone()
+
+    if reading:
+        state.update_distance(reading["distance"], reading["timestamp"])
+    if pump:
+        state.update_pump(pump["value"])
+
+
 async def store_reading(distance: float, percent: float, volume_liters: float, timestamp: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -326,6 +346,7 @@ async def lifespan(app: FastAPI):
     global main_loop
     main_loop = asyncio.get_running_loop()
     await init_db()
+    await rehydrate_state()
     mqtt_client = start_mqtt_client()
     retention_task = asyncio.create_task(retention_loop())
     logger.info("Water dashboard started")
