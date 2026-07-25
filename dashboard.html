@@ -3,17 +3,22 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Water Tank Dashboard</title>
+<title>AquaSentry // Water Tank Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
-  body { background-color: #0f172a; }
+  /* Compound selector (type+class) beats Tailwind's plain `.font-mono` class
+     on specificity, so this reliably wins regardless of stylesheet order. */
+  body.font-mono { font-family: 'JetBrains Mono', ui-monospace, 'Courier New', monospace; }
   .gauge-ring { transition: stroke-dashoffset 500ms cubic-bezier(0.77, 0, 0.175, 1), stroke 300ms ease; }
   .stale-dim { opacity: 0.5; filter: grayscale(0.4); transition: opacity 0.3s ease, filter 0.3s ease; }
-  .range-btn:focus-visible, #reset-zoom-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
+  .range-btn:focus-visible, #reset-zoom-btn:focus-visible { outline: 2px solid #ff2a2a; outline-offset: 1px; }
   .banner-enter {
     transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 200ms cubic-bezier(0.23, 1, 0.32, 1), display 200ms allow-discrete;
   }
@@ -35,48 +40,67 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
   }
+  /* Scanline overlay simulating a CRT sweep. Fixed + pointer-events:none so it
+     never intercepts clicks or affects layout. */
+  .scanlines {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.025),
+      rgba(255, 255, 255, 0.025) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  }
 </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 font-sans">
-<div class="max-w-6xl mx-auto px-4 py-6">
+<body class="min-h-screen bg-[#0a0a0a] text-[#eaeaea] font-mono">
+<div class="scanlines"></div>
+<div class="max-w-6xl mx-auto px-4 py-8">
 
   <!-- Header -->
-  <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+  <div class="flex flex-wrap items-end justify-between gap-2 mb-8 pb-4 border-b-2 border-[#eaeaea]">
     <div class="flex items-center gap-3">
-      <div id="conn-dot" class="w-3 h-3 rounded-full bg-slate-600 pulse-dot"></div>
-      <h1 class="text-2xl font-bold text-slate-100">Water Tank Dashboard</h1>
+      <div id="conn-dot" class="w-3 h-3 bg-[#404040] pulse-dot"></div>
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight uppercase leading-none">&gt;&gt;&gt; AquaSentry</h1>
+        <div class="text-[10px] tracking-[0.2em] uppercase text-[#8a8a8a] mt-1">Water Tank Monitoring System / Unit-01</div>
+      </div>
     </div>
-    <div class="text-sm text-slate-400 flex items-center gap-2">
-      <span id="stale-badge" class="banner-enter banner-hidden px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40">STALE</span>
-      Last updated: <span id="last-updated" class="text-slate-300 font-medium">--</span>
+    <div class="text-xs text-[#8a8a8a] flex items-center gap-2 uppercase tracking-wide">
+      <span id="stale-badge" class="banner-enter banner-hidden px-2 py-0.5 text-xs font-bold border-2 border-[#ff2a2a] text-[#ff2a2a]">[ STALE ]</span>
+      Last Update: <span id="last-updated" class="text-[#eaeaea] font-semibold">--</span>
     </div>
   </div>
 
   <!-- Alert banners -->
-  <div id="alert-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/40 text-red-400 text-sm font-semibold flex items-center justify-between gap-3">
+  <div id="alert-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 border-2 border-[#ff2a2a] text-[#ff2a2a] text-sm font-bold uppercase tracking-wide flex items-center justify-between gap-3">
     <span class="banner-text"></span>
-    <button id="alert-dismiss" class="text-red-400 hover:text-red-300 font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
+    <button id="alert-dismiss" class="text-[#ff2a2a] hover:text-[#eaeaea] font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
   </div>
-  <div id="api-error-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-400 text-sm flex items-center justify-between gap-3">
+  <div id="api-error-banner" class="banner-enter banner-hidden mb-6 px-4 py-3 border-2 border-dashed border-[#8a8a8a] text-[#8a8a8a] text-sm uppercase tracking-wide flex items-center justify-between gap-3">
     <span class="banner-text">Some data may be out of date. A request to the server failed.</span>
-    <button id="api-error-dismiss" class="text-amber-400 hover:text-amber-300 font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
+    <button id="api-error-dismiss" class="text-[#8a8a8a] hover:text-[#eaeaea] font-bold shrink-0 min-w-11 min-h-11 flex items-center justify-center" aria-label="Dismiss">&times;</button>
   </div>
 
   <!-- Top row: stat cards -->
   <div id="top-stats" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-      <div class="text-slate-400 text-sm mb-1">Distance</div>
-      <div class="text-3xl font-bold" id="stat-distance">-- cm</div>
-      <div class="text-slate-400 text-xs mt-1">Lower = more water</div>
+    <div class="border-2 border-[#2e2e2e] p-5">
+      <div class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-1">[ Distance ]</div>
+      <div class="text-3xl font-bold tracking-tight" id="stat-distance">-- cm</div>
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mt-1">Lower = More Water</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-      <div class="text-slate-400 text-sm mb-1">Water Volume</div>
-      <div class="text-3xl font-bold" id="stat-volume">-- L</div>
+    <div class="border-2 border-[#2e2e2e] p-5">
+      <div class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-1">[ Water Volume ]</div>
+      <div class="text-3xl font-bold tracking-tight" id="stat-volume">-- L</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
-      <div class="text-slate-400 text-sm mb-2">Pump Status</div>
+    <div class="border-2 border-[#2e2e2e] p-5 flex flex-col justify-between">
+      <div class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-2">[ Pump Status ]</div>
       <div>
-        <span id="pump-badge" class="inline-block px-4 py-1.5 rounded-full text-sm font-semibold bg-slate-700 text-slate-300">
+        <span id="pump-badge" class="inline-block px-4 py-1.5 text-sm font-bold uppercase tracking-wide border-2 border-[#2e2e2e] text-[#8a8a8a]">
           UNKNOWN
         </span>
       </div>
@@ -84,149 +108,187 @@
   </div>
 
   <!-- Pump power telemetry -->
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+  <div class="border-2 border-[#2e2e2e] p-5 mb-6">
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-slate-400 text-sm">Pump Power</h2>
-      <span id="overload-badge" class="hidden px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/40">OVERLOAD</span>
+      <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em]">[ Pump Power ]</h2>
+      <span id="overload-badge" class="hidden px-2 py-0.5 text-xs font-bold uppercase tracking-wide border-2 border-[#ff2a2a] text-[#ff2a2a]">OVERLOAD</span>
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
       <div>
-        <div class="text-slate-400 text-xs mb-1">Power</div>
-        <div class="text-xl font-bold" id="telemetry-power">-- W</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Power</div>
+        <div class="text-xl font-bold tracking-tight" id="telemetry-power">-- W</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Voltage</div>
-        <div class="text-xl font-bold" id="telemetry-voltage">-- V</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Voltage</div>
+        <div class="text-xl font-bold tracking-tight" id="telemetry-voltage">-- V</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Current</div>
-        <div class="text-xl font-bold" id="telemetry-current">-- A</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Current</div>
+        <div class="text-xl font-bold tracking-tight" id="telemetry-current">-- A</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Energy Today</div>
-        <div class="text-xl font-bold" id="telemetry-energy-today">-- kWh</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Energy Today</div>
+        <div class="text-xl font-bold tracking-tight" id="telemetry-energy-today">-- kWh</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Energy This Month</div>
-        <div class="text-xl font-bold" id="telemetry-energy-month">-- kWh</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Energy This Month</div>
+        <div class="text-xl font-bold tracking-tight" id="telemetry-energy-month">-- kWh</div>
       </div>
     </div>
   </div>
 
   <!-- Middle row: gauge + chart -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-    <div id="gauge-card" class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center">
-      <h2 class="text-slate-400 text-sm mb-4 self-start">Tank Level</h2>
+    <div id="gauge-card" class="border-2 border-[#2e2e2e] p-5 flex flex-col items-center justify-center">
+      <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4 self-start">[ Tank Level ]</h2>
       <svg viewBox="0 0 200 200" class="w-56 h-56">
-        <circle cx="100" cy="100" r="85" fill="none" stroke="#1e293b" stroke-width="16" />
+        <circle cx="100" cy="100" r="85" fill="none" stroke="#2e2e2e" stroke-width="14" />
         <circle
           id="gauge-ring"
           class="gauge-ring"
           cx="100" cy="100" r="85"
           fill="none"
-          stroke="#3b82f6"
-          stroke-width="16"
-          stroke-linecap="round"
+          stroke="#eaeaea"
+          stroke-width="14"
+          stroke-linecap="square"
           stroke-dasharray="534.07"
           stroke-dashoffset="534.07"
           transform="rotate(-90 100 100)"
         />
-        <text id="gauge-percent" x="100" y="98" text-anchor="middle" font-size="32" font-weight="bold" fill="#f1f5f9">--%</text>
-        <text id="gauge-label" x="100" y="124" text-anchor="middle" font-size="14" fill="#94a3b8">OK</text>
+        <text id="gauge-percent" x="100" y="98" text-anchor="middle" font-size="32" font-weight="800" font-family="'JetBrains Mono', monospace" fill="#eaeaea">--%</text>
+        <text id="gauge-label" x="100" y="124" text-anchor="middle" font-size="13" letter-spacing="2" font-family="'JetBrains Mono', monospace" fill="#8a8a8a">OK</text>
       </svg>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="border-2 border-[#2e2e2e] p-5">
       <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
-        <h2 class="text-slate-400 text-sm" id="level-chart-title">Water Level — Last 24 Hours</h2>
+        <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em]" id="level-chart-title">[ Water Level / Last 24 Hours ]</h2>
         <div class="flex items-center gap-1 flex-wrap">
-          <button data-hours="1" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">1H</button>
-          <button data-hours="6" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">6H</button>
-          <button data-hours="24" class="range-btn px-2 py-1 text-xs rounded-md bg-blue-600 text-white transition-colors duration-150" aria-pressed="true">24H</button>
-          <button data-hours="168" class="range-btn px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150" aria-pressed="false">7D</button>
-          <button id="reset-zoom-btn" class="px-2 py-1 text-xs rounded-md bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors duration-150">Reset Zoom</button>
+          <button data-hours="1" class="range-btn px-2 py-1 text-xs uppercase font-semibold border-2 border-[#2e2e2e] text-[#8a8a8a] hover:border-[#eaeaea] transition-colors duration-150" aria-pressed="false">1H</button>
+          <button data-hours="6" class="range-btn px-2 py-1 text-xs uppercase font-semibold border-2 border-[#2e2e2e] text-[#8a8a8a] hover:border-[#eaeaea] transition-colors duration-150" aria-pressed="false">6H</button>
+          <button data-hours="24" class="range-btn px-2 py-1 text-xs uppercase font-semibold border-2 border-[#eaeaea] bg-[#eaeaea] text-black transition-colors duration-150" aria-pressed="true">24H</button>
+          <button data-hours="168" class="range-btn px-2 py-1 text-xs uppercase font-semibold border-2 border-[#2e2e2e] text-[#8a8a8a] hover:border-[#eaeaea] transition-colors duration-150" aria-pressed="false">7D</button>
+          <button id="reset-zoom-btn" class="px-2 py-1 text-xs uppercase font-semibold border-2 border-[#2e2e2e] text-[#8a8a8a] hover:border-[#eaeaea] transition-colors duration-150">Reset Zoom</button>
         </div>
       </div>
-      <div class="text-xs text-slate-400 mb-2">Scroll or pinch to zoom, drag to pan. Hover any point for exact readings.</div>
+      <div class="text-[10px] uppercase tracking-wide text-[#8a8a8a] mb-2">Pinch = Zoom /// Drag = Pan /// Hover = Readout</div>
       <div class="h-56 sm:h-64 relative">
         <canvas id="history-chart"></canvas>
-        <div id="history-chart-empty" class="hidden absolute inset-0 flex items-center justify-center text-slate-500 text-sm">No data yet</div>
+        <div id="history-chart-empty" class="hidden absolute inset-0 flex items-center justify-center text-[#8a8a8a] text-sm uppercase tracking-wide">No Data Yet</div>
       </div>
     </div>
   </div>
 
   <!-- 24h summary stats -->
-  <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs mb-1">24h Min Level</div>
-      <div class="text-xl font-bold" id="stat-min-percent">--%</div>
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">24h Min Level</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-min-percent">--%</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs mb-1">24h Max Level</div>
-      <div class="text-xl font-bold" id="stat-max-percent">--%</div>
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">24h Max Level</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-max-percent">--%</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs mb-1">24h Avg Level</div>
-      <div class="text-xl font-bold" id="stat-avg-percent">--%</div>
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">24h Avg Level</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-avg-percent">--%</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs mb-1">Pump Runtime (24h)</div>
-      <div class="text-xl font-bold" id="stat-pump-runtime">--</div>
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Pump Runtime (24h)</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-pump-runtime">--</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs mb-1">Pump Cycles (24h)</div>
-      <div class="text-xl font-bold" id="stat-pump-cycles">--</div>
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Pump Cycles (24h)</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-pump-cycles">--</div>
+    </div>
+    <div class="border-2 border-[#2e2e2e] p-4">
+      <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Sensor Uptime (24h)</div>
+      <div class="text-xl font-bold tracking-tight" id="stat-uptime">--%</div>
     </div>
   </div>
 
   <!-- Last fill session -->
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
-    <h2 class="text-slate-400 text-sm mb-4">Last Fill Session</h2>
-    <div id="fill-session-empty" class="text-slate-500 text-sm">No completed fill session yet</div>
+  <div class="border-2 border-[#2e2e2e] p-5 mb-6">
+    <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4">[ Last Fill Session ]</h2>
+    <div id="fill-session-empty" class="text-[#8a8a8a] text-sm uppercase tracking-wide">No Completed Fill Session Yet</div>
     <div id="fill-session-content" class="hidden grid grid-cols-2 sm:grid-cols-4 gap-4">
       <div>
-        <div class="text-slate-400 text-xs mb-1">Duration</div>
-        <div class="text-xl font-bold" id="fill-duration">--</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Duration</div>
+        <div class="text-xl font-bold tracking-tight" id="fill-duration">--</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Volume Added</div>
-        <div class="text-xl font-bold" id="fill-volume">--</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Volume Added</div>
+        <div class="text-xl font-bold tracking-tight" id="fill-volume">--</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Fill Rate</div>
-        <div class="text-xl font-bold" id="fill-rate">--</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Fill Rate</div>
+        <div class="text-xl font-bold tracking-tight" id="fill-rate">--</div>
       </div>
       <div>
-        <div class="text-slate-400 text-xs mb-1">Ended</div>
-        <div class="text-xl font-bold" id="fill-ended">--</div>
+        <div class="text-[#8a8a8a] text-[10px] uppercase tracking-wide mb-1">Ended</div>
+        <div class="text-xl font-bold tracking-tight" id="fill-ended">--</div>
       </div>
     </div>
   </div>
 
+  <!-- Fill session history -->
+  <div class="border-2 border-[#2e2e2e] p-5 mb-6">
+    <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4">[ Fill Session History ]</h2>
+    <div id="fill-sessions-empty" class="text-[#8a8a8a] text-sm uppercase tracking-wide">No Completed Fill Sessions Yet</div>
+    <div id="fill-sessions-table-wrap" class="hidden overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[#8a8a8a] text-[10px] uppercase tracking-wide border-b-2 border-[#2e2e2e]">
+            <th class="py-2 pr-4 font-semibold">Start</th>
+            <th class="py-2 pr-4 font-semibold">Duration</th>
+            <th class="py-2 pr-4 font-semibold">Volume</th>
+            <th class="py-2 pr-4 font-semibold">Rate</th>
+            <th class="py-2 font-semibold">Level</th>
+          </tr>
+        </thead>
+        <tbody id="fill-sessions-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Energy usage trend -->
+  <div class="border-2 border-[#2e2e2e] p-5 mb-6">
+    <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4">[ Energy Usage / Last 14 Days ]</h2>
+    <div class="h-48 relative">
+      <canvas id="energy-chart"></canvas>
+      <div id="energy-chart-empty" class="hidden absolute inset-0 flex items-center justify-center text-[#8a8a8a] text-sm uppercase tracking-wide">No Data Yet</div>
+    </div>
+  </div>
+
   <!-- Pump activity chart -->
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
-    <h2 class="text-slate-400 text-sm mb-4" id="pump-chart-title">Pump Activity — Last 24 Hours</h2>
+  <div class="border-2 border-[#2e2e2e] p-5 mb-6">
+    <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4" id="pump-chart-title">[ Pump Activity / Last 24 Hours ]</h2>
     <div class="h-32">
       <canvas id="pump-chart"></canvas>
     </div>
   </div>
 
   <!-- Bottom: audit log -->
-  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <h2 class="text-slate-400 text-sm mb-4">Audit Log</h2>
+  <div class="border-2 border-[#2e2e2e] p-5">
+    <h2 class="text-[#8a8a8a] text-[11px] uppercase tracking-[0.15em] mb-4">[ Audit Log ]</h2>
     <div class="overflow-y-auto" style="max-height: 300px;">
       <table class="w-full text-sm">
-        <thead class="sticky top-0 bg-slate-900">
-          <tr class="text-left text-slate-500 border-b border-slate-800">
-            <th class="py-2 pr-4 font-medium">Time</th>
-            <th class="py-2 pr-4 font-medium">Event</th>
-            <th class="py-2 font-medium">Value</th>
+        <thead class="sticky top-0 bg-[#0a0a0a]">
+          <tr class="text-left text-[#8a8a8a] text-[10px] uppercase tracking-wide border-b-2 border-[#2e2e2e]">
+            <th class="py-2 pr-4 font-semibold">Time</th>
+            <th class="py-2 pr-4 font-semibold">Event</th>
+            <th class="py-2 font-semibold">Value</th>
           </tr>
         </thead>
         <tbody id="log-body">
-          <tr><td colspan="3" class="py-4 text-slate-500 text-center">No log entries yet</td></tr>
+          <tr><td colspan="3" class="py-4 text-[#8a8a8a] text-center uppercase tracking-wide">No Log Entries Yet</td></tr>
         </tbody>
       </table>
     </div>
+  </div>
+
+  <div class="mt-8 pt-4 border-t-2 border-[#eaeaea] text-[10px] uppercase tracking-[0.2em] text-[#8a8a8a] flex justify-between">
+    <span>AquaSentry &copy; Rev 2.6</span>
+    <span>/// End of Telemetry ///</span>
   </div>
 
 </div>
@@ -281,9 +343,8 @@ function levelLabel(percent) {
 }
 
 function levelColor(percent) {
-  if (percent >= 90) return '#22c55e';
-  if (percent < 30) return '#f97316';
-  return '#3b82f6';
+  if (percent < 30) return '#ff2a2a';
+  return '#eaeaea';
 }
 
 function updateGauge(percent) {
@@ -295,6 +356,7 @@ function updateGauge(percent) {
   document.getElementById('gauge-percent').textContent = (percent === null || percent === undefined) ? '--%' : `${fmtNum(percent, 0)}%`;
   const label = document.getElementById('gauge-label');
   label.textContent = levelLabel(pct);
+  label.setAttribute('fill', pct < 30 ? '#ff2a2a' : '#8a8a8a');
 }
 
 let lastPumpStatus = null; // tracked so telemetry can flag an overload-while-off contradiction
@@ -304,11 +366,11 @@ function updatePumpBadge(status) {
   const badge = document.getElementById('pump-badge');
   const isOn = (status || '').toLowerCase() === 'on';
   const isKnown = ['on', 'off'].includes((status || '').toLowerCase());
-  badge.textContent = isKnown ? (isOn ? 'RUNNING' : 'OFF') : 'UNKNOWN';
-  badge.className = 'inline-block px-4 py-1.5 rounded-full text-sm font-semibold ' +
-    (isOn ? 'bg-green-500/20 text-green-400 border border-green-500/40'
-          : isKnown ? 'bg-slate-700 text-slate-300 border border-slate-600'
-                    : 'bg-slate-700 text-slate-400 border border-slate-600');
+  badge.textContent = isKnown ? (isOn ? '[ RUNNING ]' : '[ OFF ]') : '[ UNKNOWN ]';
+  badge.className = 'inline-block px-4 py-1.5 text-sm font-bold uppercase tracking-wide border-2 ' +
+    (isOn ? 'bg-[#ff2a2a] border-[#ff2a2a] text-black'
+          : isKnown ? 'border-[#2e2e2e] text-[#eaeaea]'
+                    : 'border-[#2e2e2e] text-[#8a8a8a]');
 }
 
 function applySnapshot(data) {
@@ -380,19 +442,20 @@ function syncThresholdLines(chart, lowY, highY) {
 const zoomOptions = {
   pan: { enabled: true, mode: 'x' },
   zoom: {
-    wheel: { enabled: true },
+    wheel: { enabled: false },
     pinch: { enabled: true },
     mode: 'x',
   },
 };
 
+const MONO_FONT = { family: "'JetBrains Mono', monospace" };
 let historyLoadedOnce = false;
 
 function initChart() {
   const ctx = document.getElementById('history-chart').getContext('2d');
   const gradient = ctx.createLinearGradient(0, 0, 0, 220);
-  gradient.addColorStop(0, 'rgba(59, 130, 246, 0.4)');
-  gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+  gradient.addColorStop(0, 'rgba(234, 234, 234, 0.25)');
+  gradient.addColorStop(1, 'rgba(234, 234, 234, 0.0)');
 
   historyChart = new Chart(ctx, {
     type: 'line',
@@ -401,20 +464,22 @@ function initChart() {
         {
           label: 'Water %',
           data: [],
-          borderColor: '#3b82f6',
+          borderColor: '#eaeaea',
           backgroundColor: gradient,
           borderWidth: 2,
           fill: true,
-          tension: 0.3,
+          tension: 0,
+          stepped: false,
           pointRadius: 0,
-          pointHoverRadius: 5,
+          pointHoverRadius: 4,
+          pointHoverBackgroundColor: '#eaeaea',
           order: 1,
         },
         {
           label: 'Full (90%)',
           data: [],
-          borderColor: '#22c55e',
-          borderDash: [6, 4],
+          borderColor: '#ff2a2a',
+          borderDash: [4, 4],
           borderWidth: 1.5,
           pointRadius: 0,
           fill: false,
@@ -423,8 +488,8 @@ function initChart() {
         {
           label: 'Low (30%)',
           data: [],
-          borderColor: '#f97316',
-          borderDash: [6, 4],
+          borderColor: '#ff2a2a',
+          borderDash: [4, 4],
           borderWidth: 1.5,
           pointRadius: 0,
           fill: false,
@@ -441,24 +506,28 @@ function initChart() {
         x: {
           type: 'time',
           time: { tooltipFormat: 'PPpp' },
-          ticks: { color: '#64748b', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
-          grid: { color: '#1e293b' },
+          ticks: { color: '#8a8a8a', maxRotation: 0, autoSkip: true, maxTicksLimit: 6, font: MONO_FONT },
+          grid: { color: '#2e2e2e' },
         },
         y: {
           min: 0, max: 100,
-          ticks: { color: '#64748b', stepSize: 20 },
-          grid: { color: '#1e293b' },
+          ticks: { color: '#8a8a8a', stepSize: 20, font: MONO_FONT },
+          grid: { color: '#2e2e2e' },
         }
       },
       plugins: {
         legend: {
           display: true,
-          labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } },
+          labels: { color: '#8a8a8a', boxWidth: 12, font: { ...MONO_FONT, size: 11 } },
         },
         tooltip: {
-          backgroundColor: '#1e293b',
-          titleColor: '#f1f5f9',
-          bodyColor: '#f1f5f9',
+          backgroundColor: '#0a0a0a',
+          borderColor: '#eaeaea',
+          borderWidth: 1,
+          titleColor: '#eaeaea',
+          bodyColor: '#eaeaea',
+          titleFont: MONO_FONT,
+          bodyFont: MONO_FONT,
           callbacks: {
             title: (items) => (items.length ? fmtDateTime(items[0].parsed.x) : ''),
             label: (item) => {
@@ -519,8 +588,8 @@ let pumpHistoryLoadedOnce = false;
 function initPumpChart() {
   const ctx = document.getElementById('pump-chart').getContext('2d');
   const gradient = ctx.createLinearGradient(0, 0, 0, 130);
-  gradient.addColorStop(0, 'rgba(34, 197, 94, 0.45)');
-  gradient.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+  gradient.addColorStop(0, 'rgba(255, 42, 42, 0.35)');
+  gradient.addColorStop(1, 'rgba(255, 42, 42, 0.0)');
 
   pumpChart = new Chart(ctx, {
     type: 'line',
@@ -528,13 +597,13 @@ function initPumpChart() {
       datasets: [{
         label: 'Pump',
         data: [],
-        borderColor: '#22c55e',
+        borderColor: '#ff2a2a',
         backgroundColor: gradient,
         borderWidth: 2,
         fill: true,
         stepped: true,
         pointRadius: 0,
-        pointHoverRadius: 5,
+        pointHoverRadius: 4,
       }]
     },
     options: {
@@ -546,25 +615,30 @@ function initPumpChart() {
         x: {
           type: 'time',
           time: { tooltipFormat: 'PPpp' },
-          ticks: { color: '#64748b', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
-          grid: { color: '#1e293b' },
+          ticks: { color: '#8a8a8a', maxRotation: 0, autoSkip: true, maxTicksLimit: 6, font: MONO_FONT },
+          grid: { color: '#2e2e2e' },
         },
         y: {
           min: 0, max: 1,
           ticks: {
-            color: '#64748b',
+            color: '#8a8a8a',
             stepSize: 1,
+            font: MONO_FONT,
             callback: (v) => (v === 1 ? 'ON' : 'OFF'),
           },
-          grid: { color: '#1e293b' },
+          grid: { color: '#2e2e2e' },
         }
       },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1e293b',
-          titleColor: '#f1f5f9',
-          bodyColor: '#f1f5f9',
+          backgroundColor: '#0a0a0a',
+          borderColor: '#eaeaea',
+          borderWidth: 1,
+          titleColor: '#eaeaea',
+          bodyColor: '#eaeaea',
+          titleFont: MONO_FONT,
+          bodyFont: MONO_FONT,
           callbacks: {
             title: (items) => (items.length ? fmtDateTime(items[0].parsed.x) : ''),
             label: (ctx) => (ctx.parsed.y === 1 ? 'Pump ON' : 'Pump OFF'),
@@ -574,6 +648,72 @@ function initPumpChart() {
       }
     }
   });
+}
+
+// ---- Energy usage chart ----
+let energyChart = null;
+
+function initEnergyChart() {
+  const ctx = document.getElementById('energy-chart').getContext('2d');
+  energyChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'kWh',
+        data: [],
+        backgroundColor: '#eaeaea',
+        borderColor: '#eaeaea',
+        borderWidth: 1,
+        maxBarThickness: 28,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      scales: {
+        x: {
+          ticks: { color: '#8a8a8a', font: MONO_FONT, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#8a8a8a', font: MONO_FONT },
+          grid: { color: '#2e2e2e' },
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0a0a0a',
+          borderColor: '#eaeaea',
+          borderWidth: 1,
+          titleColor: '#eaeaea',
+          bodyColor: '#eaeaea',
+          titleFont: MONO_FONT,
+          bodyFont: MONO_FONT,
+          callbacks: {
+            label: (ctx) => `${fmtNum(ctx.parsed.y, 2)} kWh`,
+          }
+        },
+      }
+    }
+  });
+}
+
+async function loadEnergyHistory() {
+  try {
+    const rows = await fetchJson('/api/energy-history?days=14');
+    if (!energyChart) return;
+    document.getElementById('energy-chart-empty').classList.toggle('hidden', rows.length > 0);
+    energyChart.data.labels = rows.map(r => r.day.slice(5)); // MM-DD
+    energyChart.data.datasets[0].data = rows.map(r => r.energy_kwh);
+    energyChart.update();
+  } catch (e) {
+    console.error('Failed to load energy history', e);
+    showApiError();
+  }
 }
 
 async function loadPumpHistory(hours = currentRangeHours, resetView = false) {
@@ -594,14 +734,15 @@ function setRange(hours) {
   currentRangeHours = hours;
   document.querySelectorAll('.range-btn').forEach(btn => {
     const active = Number(btn.dataset.hours) === hours;
-    btn.classList.toggle('bg-blue-600', active);
-    btn.classList.toggle('text-white', active);
-    btn.classList.toggle('bg-slate-800', !active);
-    btn.classList.toggle('text-slate-400', !active);
+    btn.classList.toggle('bg-[#eaeaea]', active);
+    btn.classList.toggle('text-black', active);
+    btn.classList.toggle('border-[#eaeaea]', active);
+    btn.classList.toggle('text-[#8a8a8a]', !active);
+    btn.classList.toggle('border-[#2e2e2e]', !active);
     btn.setAttribute('aria-pressed', String(active));
   });
-  document.getElementById('level-chart-title').textContent = `Water Level — ${rangeLabel(hours)}`;
-  document.getElementById('pump-chart-title').textContent = `Pump Activity — ${rangeLabel(hours)}`;
+  document.getElementById('level-chart-title').textContent = `[ Water Level / ${rangeLabel(hours).toUpperCase()} ]`;
+  document.getElementById('pump-chart-title').textContent = `[ Pump Activity / ${rangeLabel(hours).toUpperCase()} ]`;
   loadHistory(hours);
   loadPumpHistory(hours, true);
 }
@@ -632,6 +773,45 @@ async function loadStats() {
     document.getElementById('stat-pump-cycles').textContent = data.pump_cycles ?? '--';
   } catch (e) {
     console.error('Failed to load stats', e);
+    showApiError();
+  }
+}
+
+async function loadUptime() {
+  try {
+    const data = await fetchJson('/api/uptime?hours=24');
+    const el = document.getElementById('stat-uptime');
+    el.textContent = `${fmtNum(data.uptime_percent, 1)}%`;
+    el.classList.toggle('text-[#ff2a2a]', data.uptime_percent < 90);
+  } catch (e) {
+    console.error('Failed to load uptime', e);
+    showApiError();
+  }
+}
+
+async function loadFillSessions() {
+  try {
+    const rows = await fetchJson('/api/fill-sessions?limit=10');
+    const empty = document.getElementById('fill-sessions-empty');
+    const wrap = document.getElementById('fill-sessions-table-wrap');
+    if (!rows || rows.length === 0) {
+      empty.classList.remove('hidden');
+      wrap.classList.add('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    wrap.classList.remove('hidden');
+    document.getElementById('fill-sessions-body').innerHTML = rows.map(r => `
+      <tr class="border-b border-[#2e2e2e]">
+        <td class="py-2 pr-4 text-[#8a8a8a]">${fmtDateTime(r.start_timestamp)}</td>
+        <td class="py-2 pr-4">${fmtNum(r.duration_minutes, 1)} min</td>
+        <td class="py-2 pr-4">+${fmtNum(r.volume_added_liters, 1)} L</td>
+        <td class="py-2 pr-4">${fmtNum(r.rate_l_per_min, 1)} L/min</td>
+        <td class="py-2">${fmtNum(r.start_percent, 0)}% &rarr; ${fmtNum(r.end_percent, 0)}%</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    console.error('Failed to load fill sessions', e);
     showApiError();
   }
 }
@@ -712,30 +892,30 @@ async function loadPumpTelemetry() {
 // ---- Audit log ----
 function eventRowClass(event, value) {
   if (event === 'alert') {
-    return 'border-l-2 border-amber-500 bg-amber-500/10 font-semibold';
+    return 'border-l-4 border-[#ff2a2a] font-semibold';
   }
   if (event === 'pump') {
     return (value || '').toLowerCase() === 'on'
-      ? 'border-l-2 border-green-500 bg-green-500/5'
-      : 'border-l-2 border-red-500 bg-red-500/5';
+      ? 'border-l-4 border-[#eaeaea]'
+      : 'border-l-4 border-[#2e2e2e]';
   }
-  return 'border-l-2 border-blue-500 bg-blue-500/5';
+  return 'border-l-4 border-[#2e2e2e]';
 }
 
 function eventLabel(event) {
-  return event === 'alert' ? '⚠ Alert' : event;
+  return event === 'alert' ? '! ALERT' : event.toUpperCase();
 }
 
 function renderLogs(rows) {
   const body = document.getElementById('log-body');
   if (!rows || rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="3" class="py-4 text-slate-500 text-center">No log entries yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="py-4 text-[#8a8a8a] text-center uppercase tracking-wide">No Log Entries Yet</td></tr>';
     return;
   }
   body.innerHTML = rows.map(row => `
     <tr class="${eventRowClass(row.event, row.value)}">
-      <td class="py-2 pr-4 text-slate-400">${fmtTime(row.timestamp)}</td>
-      <td class="py-2 pr-4 capitalize">${eventLabel(row.event)}</td>
+      <td class="py-2 pr-4 pl-2 text-[#8a8a8a]">${fmtTime(row.timestamp)}</td>
+      <td class="py-2 pr-4">${eventLabel(row.event)}</td>
       <td class="py-2">${row.value}</td>
     </tr>
   `).join('');
@@ -749,8 +929,8 @@ function prependLogEntry(event, value, timestamp) {
   const tr = document.createElement('tr');
   tr.className = eventRowClass(event, value);
   tr.innerHTML = `
-    <td class="py-2 pr-4 text-slate-400">${fmtTime(timestamp)}</td>
-    <td class="py-2 pr-4 capitalize">${eventLabel(event)}</td>
+    <td class="py-2 pr-4 pl-2 text-[#8a8a8a]">${fmtTime(timestamp)}</td>
+    <td class="py-2 pr-4">${eventLabel(event)}</td>
     <td class="py-2">${value}</td>
   `;
   body.prepend(tr);
@@ -776,8 +956,8 @@ let reconnectDelay = 1000;
 function setConnDot(connected) {
   const dot = document.getElementById('conn-dot');
   dot.className = connected
-    ? 'w-3 h-3 rounded-full bg-green-500'
-    : 'w-3 h-3 rounded-full bg-red-500 pulse-dot';
+    ? 'w-3 h-3 bg-[#4af626]'
+    : 'w-3 h-3 bg-[#ff2a2a] pulse-dot';
 }
 
 function connectWebSocket() {
@@ -831,11 +1011,15 @@ async function loadInitial() {
 
 initChart();
 initPumpChart();
+initEnergyChart();
 loadInitial();
 loadHistory();
 loadPumpHistory();
 loadStats();
+loadUptime();
 loadLastFillSession();
+loadFillSessions();
+loadEnergyHistory();
 loadPumpTelemetry();
 loadLogs();
 connectWebSocket();
@@ -843,8 +1027,10 @@ updateLastUpdatedLabel();
 
 setInterval(() => {
   loadStats();
+  loadUptime();
   loadPumpHistory();
   loadLastFillSession();
+  loadFillSessions();
   loadPumpTelemetry();
 }, 30000);
 </script>

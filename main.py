@@ -196,7 +196,21 @@ async def init_db():
             """
         )
         await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS energy_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                power_w REAL,
+                energy_today_kwh REAL,
+                energy_month_kwh REAL,
+                timestamp TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_energy_log_timestamp ON energy_log(timestamp)"
         )
         await db.commit()
 
@@ -239,6 +253,15 @@ async def store_audit_log(event: str, value: str, timestamp: str):
         await db.commit()
 
 
+async def store_energy_log(power_w, energy_today_kwh, energy_month_kwh, timestamp: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO energy_log (power_w, energy_today_kwh, energy_month_kwh, timestamp) VALUES (?, ?, ?, ?)",
+            (power_w, energy_today_kwh, energy_month_kwh, timestamp),
+        )
+        await db.commit()
+
+
 async def prune_old_data():
     cutoff = utc_cutoff_iso(days=RETENTION_DAYS)
     async with aiosqlite.connect(DB_PATH) as db:
@@ -248,10 +271,13 @@ async def prune_old_data():
         logs_cursor = await db.execute(
             "DELETE FROM audit_log WHERE timestamp < ?", (cutoff,)
         )
+        energy_cursor = await db.execute(
+            "DELETE FROM energy_log WHERE timestamp < ?", (cutoff,)
+        )
         await db.commit()
     logger.info(
-        "Pruned %d reading(s) and %d log(s) older than %d days",
-        readings_cursor.rowcount, logs_cursor.rowcount, RETENTION_DAYS,
+        "Pruned %d reading(s), %d log(s), %d energy row(s) older than %d days",
+        readings_cursor.rowcount, logs_cursor.rowcount, energy_cursor.rowcount, RETENTION_DAYS,
     )
 
 
@@ -294,6 +320,13 @@ async def handle_pump_telemetry_message(payload: str):
         logger.warning("Ignoring malformed pump telemetry payload: %r", payload)
         return
     pump_telemetry.update(data)
+    if data.get("energy_today_kwh") is not None:
+        # Use our own clock rather than the payload's timestamp — mixing timestamp
+        # formats/timezones would break the lexicographic cutoff comparisons used
+        # elsewhere (see utc_cutoff_iso's docstring).
+        await store_energy_log(
+            data.get("power_w"), data.get("energy_today_kwh"), data.get("energy_month_kwh"), utc_now_iso()
+        )
     await manager.broadcast({"event": "telemetry", **pump_telemetry.snapshot()})
 
 
@@ -559,6 +592,140 @@ async def api_last_fill_session():
         "rate_l_per_min": round(volume_added / duration_minutes, 1),
         "rate_cm_per_min": round(distance_dropped / duration_minutes, 2),
     })
+
+
+def pair_pump_events(events: list[tuple[str, str]], limit: int) -> list[tuple[str, str]]:
+    """Pair adjacent off->on rows (input ordered newest-first) into (on_ts, off_ts)
+    tuples. Audit entries can include duplicate same-value republishes (e.g. on
+    Home Assistant restart), so only genuine adjacent transitions count."""
+    pairs = []
+    for i in range(len(events) - 1):
+        value, timestamp = events[i]
+        next_value, next_timestamp = events[i + 1]
+        if value.lower() == "off" and next_value.lower() == "on":
+            pairs.append((next_timestamp, timestamp))
+        if len(pairs) >= limit:
+            break
+    return pairs
+
+
+@app.get("/api/fill-sessions")
+async def api_fill_sessions(limit: int = 10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        events_cursor = await db.execute(
+            "SELECT value, timestamp FROM audit_log WHERE event = 'pump' ORDER BY timestamp DESC LIMIT 200"
+        )
+        events = await events_cursor.fetchall()
+        pairs = pair_pump_events([(row["value"], row["timestamp"]) for row in events], limit)
+
+        sessions = []
+        for on_timestamp, off_timestamp in pairs:
+            start_cursor = await db.execute(
+                "SELECT distance, percent, volume_liters, timestamp FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC LIMIT 1",
+                (on_timestamp,),
+            )
+            start_reading = await start_cursor.fetchone()
+            end_cursor = await db.execute(
+                "SELECT distance, percent, volume_liters, timestamp FROM readings WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
+                (off_timestamp,),
+            )
+            end_reading = await end_cursor.fetchone()
+            if not start_reading or not end_reading:
+                continue
+
+            duration_seconds = (
+                datetime.fromisoformat(end_reading["timestamp"]) - datetime.fromisoformat(start_reading["timestamp"])
+            ).total_seconds()
+            if duration_seconds <= 0:
+                continue
+            duration_minutes = duration_seconds / 60
+            volume_added = end_reading["volume_liters"] - start_reading["volume_liters"]
+
+            sessions.append({
+                "start_timestamp": start_reading["timestamp"],
+                "end_timestamp": end_reading["timestamp"],
+                "duration_minutes": round(duration_minutes, 1),
+                "start_percent": start_reading["percent"],
+                "end_percent": end_reading["percent"],
+                "volume_added_liters": round(volume_added, 1),
+                "rate_l_per_min": round(volume_added / duration_minutes, 1),
+            })
+
+    return JSONResponse(sessions)
+
+
+@app.get("/api/energy-history")
+async def api_energy_history(days: int = 14):
+    window = utc_cutoff_iso(days=days)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT substr(timestamp, 1, 10) AS day, MAX(energy_today_kwh) AS energy_kwh
+            FROM energy_log
+            WHERE timestamp >= ? AND energy_today_kwh IS NOT NULL
+            GROUP BY day
+            ORDER BY day ASC
+            """,
+            (window,),
+        )
+        rows = await cursor.fetchall()
+    return JSONResponse([dict(row) for row in rows])
+
+
+def compute_uptime(
+    timestamps: list[datetime], window_start: datetime, now: datetime, gap_threshold_seconds: int
+) -> dict:
+    """Sensor uptime = fraction of the window not covered by a gap between
+    readings longer than gap_threshold_seconds (readings arrive every ~7s
+    normally, so a multi-minute gap means the sensor/link was down)."""
+    total_seconds = (now - window_start).total_seconds()
+    if total_seconds <= 0:
+        return {"uptime_percent": 100.0, "downtime_minutes": 0.0, "gap_count": 0}
+    if not timestamps:
+        return {
+            "uptime_percent": 0.0,
+            "downtime_minutes": round(total_seconds / 60, 1),
+            "gap_count": 0,
+        }
+
+    downtime_seconds = 0.0
+    gap_count = 0
+    prev = window_start
+    for ts in timestamps:
+        gap = (ts - prev).total_seconds()
+        if gap > gap_threshold_seconds:
+            downtime_seconds += gap
+            gap_count += 1
+        prev = ts
+    trailing_gap = (now - prev).total_seconds()
+    if trailing_gap > gap_threshold_seconds:
+        downtime_seconds += trailing_gap
+        gap_count += 1
+
+    uptime_percent = max(0.0, min(100.0, 100 * (1 - downtime_seconds / total_seconds)))
+    return {
+        "uptime_percent": round(uptime_percent, 1),
+        "downtime_minutes": round(downtime_seconds / 60, 1),
+        "gap_count": gap_count,
+    }
+
+
+@app.get("/api/uptime")
+async def api_uptime(hours: int = 24, gap_threshold_seconds: int = 120):
+    window_start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT timestamp FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC",
+            (window_start.isoformat(),),
+        )
+        rows = await cursor.fetchall()
+
+    timestamps = [datetime.fromisoformat(row["timestamp"]) for row in rows]
+    result = compute_uptime(timestamps, window_start, datetime.now(timezone.utc), gap_threshold_seconds)
+    return JSONResponse(result)
 
 
 @app.get("/api/logs")
