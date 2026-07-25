@@ -5,7 +5,7 @@ A self-hosted water tank monitoring dashboard with automated pump control, built
 ![Dashboard overview](screenshots/dashboard-overview.png)
 
 <details>
-<summary>Full dashboard (charts, fill session, pump activity, audit log)</summary>
+<summary>Full dashboard (charts, fill session history, energy usage, pump activity, sensor uptime, audit log)</summary>
 
 ![Dashboard detail](screenshots/dashboard-detail.png)
 
