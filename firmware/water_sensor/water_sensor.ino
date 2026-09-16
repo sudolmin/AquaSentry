@@ -11,6 +11,7 @@
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
+#include <math.h>
 #include "secrets.h"
 
 #define TRIG_PIN D5
@@ -21,8 +22,20 @@
 #define NUM_SAMPLES     7
 #define READ_INTERVAL   5000  // 5 seconds
 
+// The tank fills/drains slowly (full 90->15cm swing takes ~15+ minutes, so
+// well under ~2cm per READ_INTERVAL even at the fastest observed fill rate).
+// A single-cycle jump bigger than this is noise, not real water movement —
+// most likely long/marginal TRIG-ECHO wiring picking up interference. Require
+// a jump to repeat a few times in a row before trusting it as a real change
+// (e.g. after physically moving/re-mounting the sensor).
+#define MAX_JUMP_CM         15.0
+#define OUTLIER_PERSIST_COUNT 3
+
 WiFiClient espClient;
 PubSubClient client(espClient);
+
+float lastGoodDistance = -1;
+int outlierStreak = 0;
 
 float getDistance() {
   float readings[NUM_SAMPLES];
@@ -118,15 +131,25 @@ void loop() {
   float dist = getDistance();
   Serial.println("Distance: " + String(dist) + "cm");
 
-  if (dist != -1) {
+  if (dist == -1) {
+    Serial.println("[Sensor] Invalid reading - skipping");
+  } else if (lastGoodDistance != -1 && fabs(dist - lastGoodDistance) > MAX_JUMP_CM
+             && ++outlierStreak < OUTLIER_PERSIST_COUNT) {
+    Serial.print("[Sensor] Outlier rejected (jump from ");
+    Serial.print(lastGoodDistance);
+    Serial.print(" to ");
+    Serial.print(dist);
+    Serial.print("cm), streak=");
+    Serial.println(outlierStreak);
+  } else {
+    outlierStreak = 0;
+    lastGoodDistance = dist;
     char distStr[8];
     dtostrf(dist, 4, 2, distStr);
     bool ok = client.publish("water/distance", distStr);
     Serial.print("[MQTT] Publish ");
     Serial.print(distStr);
     Serial.println(ok ? " -> ok" : " -> FAILED");
-  } else {
-    Serial.println("[Sensor] Invalid reading - skipping");
   }
 
   delay(READ_INTERVAL);

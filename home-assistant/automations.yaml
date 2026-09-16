@@ -69,13 +69,17 @@
 - id: '1782900000001'
   alias: Publish Pump Status to MQTT
   description: Mirrors the pump switch state to water/pump (retained), which
-    the dashboard consumes for the pump status badge and audit log.
+    the dashboard consumes for the pump status badge and audit log. Also fires
+    on 'unavailable' — a smart plug that loses power just vanishes from the
+    network rather than reporting 'off', so without this the dashboard would
+    silently freeze on the last-known status instead of showing it as unknown.
   triggers:
   - trigger: state
     entity_id: switch.pump
     to:
     - 'on'
     - 'off'
+    - 'unavailable'
   - trigger: homeassistant
     event: start
   actions:
